@@ -2,6 +2,8 @@
 
 Empat tabel di Postgres Supabase. RLS aktif di semuanya — lihat [03-security.md](03-security.md).
 
+Selain tabel, ada empat fungsi workflow yang menjalankan setiap transisi sebagai satu transaksi (`supabase/migrations/0005_workflow.sql`). Alasan dan pembatasan hak aksesnya ada di [03-security.md](03-security.md#server-actions-dan-rpc).
+
 ## ERD
 
 ```mermaid
@@ -146,8 +148,11 @@ create table submissions (
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now(),
 
+  -- Severity rates damage. An asset registration has nothing to rate.
   constraint severity_only_for_damage
-    check (type = 'damage' or severity is null)
+    check (type <> 'asset' or severity is null),
+  constraint severity_required_for_damage
+    check (type <> 'damage' or severity is not null)
 );
 
 create index on submissions (status, deadline);
@@ -160,7 +165,11 @@ create index on submissions (facility_id);
 - `type = 'damage'` → menunjuk facility yang sudah ada di master (`is_active = true`)
 - `type = 'asset'` → menunjuk facility baru yang masih `is_active = false`
 
+Relasi itu dijaga trigger `submissions_guard_facility` saat insert, bukan sekadar konvensi: damage wajib menunjuk facility yang sudah terbit, asset wajib menunjuk draft milik pengaju sendiri yang belum terbit. Ditaruh di trigger supaya berlaku juga untuk tulisan dari service role.
+
 **Empat status saja.** Detail *siapa* menolak dan *di tahap mana* ada di `submission_actions` — tidak perlu `rejected_review` dan `rejected_approval` terpisah. Lihat [02-workflow.md](02-workflow.md).
+
+Trigger `submissions_guard_immutables` mengunci `deadline`, `type`, `submitted_by`, dan `facility_id` setelah insert. `status` sengaja dibiarkan bergerak — itulah satu-satunya kolom yang alur kerja memang perlu ubah.
 
 Indeks `(status, deadline)` melayani query cron harian sekaligus filter daftar.
 
@@ -171,7 +180,7 @@ Indeks `(status, deadline)` melayani query cron harian sekaligus filter daftar.
 ```sql
 create table submission_actions (
   id            bigint primary key generated always as identity,
-  submission_id bigint not null references submissions(id) on delete cascade,
+  submission_id bigint not null references submissions(id) on delete restrict,
   actor_id      uuid not null references profiles(id),
   actor_role    text not null,
   action        text not null check (action in ('submit','resubmit','approve','reject')),
@@ -186,17 +195,31 @@ Satu tabel ini melayani reviewer maupun approver sekaligus, dan menjadi riwayat 
 
 `actor_role` disimpan sebagai snapshot — kalau role user berubah suatu saat, catatan lama tetap menunjukkan kapasitas apa yang dia pakai waktu itu.
 
-`remarks_html` berisi HTML yang **sudah disanitasi di server**. Wajib terisi saat `action = 'reject'`, opsional saat approve. Aturan ini ditegakkan di Server Action, bukan constraint database, supaya pesan errornya bisa manusiawi.
+`remarks_html` berisi HTML yang **sudah disanitasi di server**. Wajib terisi saat `action = 'reject'`, opsional saat approve.
+
+Aturan itu ditegakkan di **dua** tempat: Server Action memvalidasi lebih dulu supaya pesan errornya manusiawi, dan constraint `reject_requires_remarks` menjadi jaring pengaman terakhir — termasuk menolak `<p><br></p>` yang dihasilkan contenteditable kosong.
+
+```sql
+constraint reject_requires_remarks
+  check (action <> 'reject'
+         or coalesce(length(regexp_replace(remarks_html, '<[^>]*>', '', 'g')), 0) > 0)
+```
+
+FK memakai `on delete restrict`, bukan `cascade`: trigger append-only di bawah akan menggagalkan cascade delete, jadi `restrict` menyatakan aturan sebenarnya — submission yang punya riwayat tidak bisa dihapus.
+
+Tabel ini append-only untuk **semua**, service role sekalipun, ditegakkan trigger `submission_actions_append_only` yang menolak `UPDATE` dan `DELETE`.
 
 ---
 
 ## Storage
 
-Satu bucket privat: `facility-photos`.
+Satu bucket privat: `facility-photos`. Batas 10 MB, MIME dibatasi ke `image/jpeg|png|webp|heic`.
 
 ```
-{submission_id}/{uuid}.jpg
+{auth.uid()}/{uuid}.{ext}
 ```
+
+Folder dikunci ke **uploader**, bukan ke submission: upload terjadi saat user masih mengisi form, sebelum baris `submissions` ada, jadi tidak ada submission id untuk dijadikan kunci.
 
 Akses lewat signed URL berumur pendek yang dibuat di server. Bucket privat, bukan publik — foto kerusakan bisa memuat informasi lokasi internal.
 

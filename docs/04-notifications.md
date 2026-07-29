@@ -120,7 +120,16 @@ Satu email per penerima per pengajuan. Tanpa pengelompokan ringkasan harian — 
 
 ## Provider
 
-Provider email dipilih lewat `vercel integration discover`, bukan di-hardcode. Kode pengiriman dibungkus satu fungsi:
+Provider dipilih lewat `vercel integration discover --category messaging`, bukan di-hardcode. Kategori itu hanya mengembalikan satu hasil: **Resend** (`resend/resend-email`).
+
+Instalasinya masih **tertahan** menunggu penerimaan marketplace terms di browser — langkah legal yang harus dilakukan pemilik akun sendiri:
+
+```
+https://vercel.com/yayanrws-projects/~/integrations/accept-terms/resend?source=cli
+vercel integration add resend/resend-email --no-claim   # ulangi setelah diterima
+```
+
+Kode pengiriman dibungkus satu fungsi:
 
 ```ts
 // lib/email.ts

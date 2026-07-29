@@ -11,6 +11,10 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
+    // Tests run on Node's built-in runner via type stripping, which resolves
+    // imports as real paths and so requires the `.ts` extension. Safe with
+    // noEmit: nothing here is compiled by tsc.
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "incremental": true,
     "plugins": [

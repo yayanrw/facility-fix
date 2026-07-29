@@ -38,13 +38,13 @@ Karena `approved` terminal dan deadline dihitung dari submit, artinya deadline =
 
 | Bagian | Pilihan | Alasan |
 |---|---|---|
-| Framework | Next.js 16 App Router + TypeScript | Server Actions untuk submit/approve/reject — tanpa API layer terpisah |
+| Framework | Next.js 16.2 App Router + TypeScript | Server Actions untuk submit/approve/reject — tanpa API layer terpisah |
 | Database, Auth, Storage | Supabase | Postgres + Auth + Storage foto dalam satu provisioning |
 | Hosting & cron | Vercel | `vercel.ts` crons untuk pengingat deadline harian |
 | Design system | **shadcn/ui** + Tailwind | Satu-satunya sumber komponen UI — lihat [Design system](#design-system) |
 | Editor remarks | `react-simple-wysiwyg` (~5 kB) | Wrapper tipis di atas `contenteditable` |
 | Sanitasi HTML | `sanitize-html` di server | Wajib — remarks HTML disimpan lalu dirender balik |
-| Email | ditentukan lewat `vercel integration discover` | Provider dipilih dari marketplace, tidak di-hardcode |
+| Email | Resend (via Marketplace) | Satu-satunya hasil `discover --category messaging`. Menunggu penerimaan terms |
 
 Yang sengaja **tidak** dipakai: state management library (Server Components + Server Actions sudah cukup), NextAuth (Supabase Auth langsung), tabel attachment terpisah (cukup kolom `text[]`).
 
@@ -60,19 +60,23 @@ Aturannya:
 - **Komponen custom di `components/`**, disusun dari primitif shadcn. Contoh: `StatusBadge` membungkus `Badge`, `SubmissionTable` membungkus `Table`.
 - **Token tema, bukan warna mentah.** Pakai `bg-background`, `text-muted-foreground`, `border-border` — jangan `bg-white`, `text-gray-500`. Warna status didefinisikan sekali di `app/globals.css` sebagai CSS variable, supaya dark mode ikut jalan tanpa kerja tambahan.
 - **Notifikasi lewat `sonner`** (toast bawaan shadcn). Tidak ada `alert()`, tidak ada banner buatan sendiri.
-- **Form lewat `form` + `zod`** (react-hook-form, bawaan shadcn). Skema validasi yang sama dipakai ulang di Server Action, jadi validasi klien dan server tidak bisa berbeda.
+- **Form lewat `field` + `zod` + `useActionState`.** shadcn versi Base UI **tidak lagi mengirim komponen `form`** (pembungkus react-hook-form) — penggantinya primitif `Field`, `FieldLabel`, `FieldError`, `FieldGroup`. Validasi hanya hidup di server: skema zod dipakai di Server Action, errornya dikembalikan lewat `useActionState` dan dirender oleh `FieldError`. Tidak ada react-hook-form, dan validasi klien tidak bisa menyimpang dari validasi server karena memang cuma ada satu.
 
 Komponen yang dipakai:
 
 ```
-button  table  dialog  form  input  textarea  select  checkbox
+button  table  dialog  field  input  textarea  select  checkbox
 badge   card   command  popover  calendar  tabs  skeleton  sonner
 alert-dialog  dropdown-menu  avatar  separator  label
 ```
 
 Combobox pemilih facility disusun dari `popover` + `command` — shadcn tidak mengirim `combobox` sebagai satu komponen.
 
+`Badge` di `components/ui/badge.tsx` ditambahi varian `success` dan `warning`, mengikuti pola tinted milik `destructive`. Ini persis yang dimaksud "komponen `ui/` boleh diedit" — bukan menambal dengan `className` di setiap pemakaian.
+
 Satu-satunya komponen di luar shadcn adalah editor remarks (`react-simple-wysiwyg`) — shadcn tidak punya rich text editor. Editor itu dibungkus komponen sendiri di `components/remarks-editor.tsx` supaya tampilannya menyatu dengan `Textarea` (border, radius, focus ring dari token yang sama), dan supaya gampang diganti kalau nanti pindah editor.
+
+Warna internal editor **tidak** bisa diatur lewat utility Tailwind. Dua sebab bertumpuk: Tailwind v4 menaruh utility di dalam `@layer` sedangkan CSS library unlayered (unlayered selalu menang atas layered), dan library menyuntikkan sheet-nya ke `<style>` saat runtime sehingga selalu datang belakangan. Karena itu ada satu blok CSS unlayered di `app/globals.css`, di-scope dengan `.remarks-editor` agar specificity-nya 0,2,0 melawan 0,1,0 milik library. Seluruh nilainya tetap memakai token yang sama, jadi dark mode tetap ikut otomatis.
 
 Warna semantik status, didefinisikan sekali:
 
