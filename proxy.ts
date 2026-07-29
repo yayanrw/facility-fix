@@ -1,8 +1,15 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-/** Routes reachable without a session. Everything else requires one. */
-const PUBLIC_PATHS = ["/login", "/auth"];
+/**
+ * Routes reachable without a session. Everything else requires one.
+ *
+ * `/api` is here too: API routes authenticate themselves (the cron route
+ * checks CRON_SECRET, not a cookie), so this proxy redirecting them to
+ * /login would mean Vercel's own cron invocation — bearer token, no
+ * session — never reaches the route handler at all.
+ */
+const PUBLIC_PATHS = ["/login", "/auth", "/api"];
 
 /**
  * Next 16 calls this file `proxy.ts` — `middleware.ts` still runs but logs a

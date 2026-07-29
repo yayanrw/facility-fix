@@ -34,6 +34,18 @@ const EMAIL = {
 let facilityId = 0;
 let todayDate: Date;
 
+/**
+ * runDeadlineCron operates on the whole submissions table, not just this
+ * test's own rows — that is the real production query, not something a test
+ * can narrow. So before touching anything, snapshot every row's stamps and
+ * restore them all in `after`, for every id this test didn't create itself.
+ * Without this, running this suite against a shared dev/seed database
+ * silently marks real submissions as reminded/notified using a fake `send`
+ * that never actually emailed anyone — exactly what happened the first time
+ * this test ran here (see docs/05-roadmap.md step 7).
+ */
+let stampSnapshot: { id: number; reminder_sent_at: string | null; overdue_sent_at: string | null }[] = [];
+
 let subDueSoonReview = 0; // pending_review, deadline = today -> reminder to submitter + both reviewers
 let subDueSoonApproval = 0; // pending_approval, deadline = today+3 -> reminder to submitter + approver
 let subOverdue = 0; // pending_review, deadline = today-2 -> overdue notice to submitter + both reviewers
@@ -82,6 +94,11 @@ before(async () => {
   const today = await ctl.query(`select current_date::text as d`);
   todayDate = new Date(`${today.rows[0].d}T00:00:00`);
 
+  const snap = await ctl.query(
+    `select id, reminder_sent_at, overdue_sent_at from public.submissions`
+  );
+  stampSnapshot = snap.rows;
+
   subDueSoonReview = await newDamage("current_date");
   subOverdue = await newDamage("current_date - 2");
   subOutOfRange = await newDamage("current_date + 10");
@@ -109,6 +126,19 @@ before(async () => {
 
 after(async () => {
   if (ctl) {
+    // Restore any real submission's stamps that runDeadlineCron touched
+    // during this run — the fake `send` above never actually emailed them.
+    const ownIds = new Set(
+      [subDueSoonReview, subDueSoonApproval, subOverdue, subApprovedOverdue, subOutOfRange, subAlreadyReminded].filter(Boolean)
+    );
+    for (const row of stampSnapshot) {
+      if (ownIds.has(row.id)) continue;
+      await ctl.query(
+        `update public.submissions set reminder_sent_at = $2, overdue_sent_at = $3 where id = $1`,
+        [row.id, row.reminder_sent_at, row.overdue_sent_at]
+      );
+    }
+
     await purgeUsers(ctl, Object.values(USER));
     await ctl.end();
   }
