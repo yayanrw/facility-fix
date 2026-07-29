@@ -9,12 +9,13 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "node --test \"test/*.test.ts\"",
-    "test:db": "node --env-file=.env.local --test \"test/integration/*.test.ts\""
+    "test:db": "node --env-file=.env.local --conditions=react-server --test \"test/integration/*.test.ts\""
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
     "@supabase/ssr": "^0.12.3",
     "@supabase/supabase-js": "^2.110.9",
+    "@vercel/config": "^0.5.5",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",

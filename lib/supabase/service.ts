@@ -2,7 +2,7 @@ import "server-only";
 
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
-import { SUPABASE_SERVICE_ROLE_KEY, SUPABASE_URL } from "./env";
+import { SUPABASE_SERVICE_ROLE_KEY, SUPABASE_URL } from "./env.ts";
 
 /**
  * Service-role client. **Bypasses every RLS policy.**

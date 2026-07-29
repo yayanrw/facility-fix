@@ -2,7 +2,7 @@
 
 Urutan dipilih supaya setiap langkah bisa dijalankan dan dilihat hasilnya sebelum lanjut. Tidak ada langkah yang membangun sesuatu yang baru terpakai tiga langkah kemudian.
 
-**Status: step 0–6 selesai.** Perintah verifikasi: `npm run typecheck && npm run lint && npm test && npm run test:db && npm run build`.
+**Status: step 0–8 selesai.** Perintah verifikasi: `npm run typecheck && npm run lint && npm test && npm run test:db && npm run build`.
 
 ## 0 — Provisioning ✅
 
@@ -140,28 +140,47 @@ Filter memakai form `GET`, jadi hasil tersaring ada di URL — bisa dibagikan da
 
 Butir 7 pada daftar verifikasi lama — penolakan approver yang direvisi harus masuk antrean **reviewer** — dicakup pengujian otomatis `a rejection by the approver still returns to the reviewer`.
 
-## 7 — Notifikasi
+## 7 — Notifikasi ✅
 
-- [ ] `lib/email.ts` — `sendEmail()`
-- [ ] `app/api/cron/deadline/route.ts` — dua query + stempel `*_sent_at`
-- [ ] `vercel.ts` dengan entri cron
+- [x] `lib/notification-content.ts` — format subjek/isi email, murni tanpa `server-only` supaya bisa diuji lewat `npm test`
+- [x] `lib/notifications.ts` — `runDeadlineCron()`, dua query + stempel `*_sent_at`
+- [x] `lib/email.ts` — `sendEmail()` lewat fetch langsung ke Resend REST API (tanpa SDK tambahan)
+- [x] `lib/cron-auth.ts` + `app/api/cron/deadline/route.ts` — endpoint dilindungi `CRON_SECRET`
+- [x] `vercel.ts` dengan entri cron (`0 0 * * *`)
+- [x] `CRON_SECRET` sudah diprovisikan ke Production/Preview/Development lewat `vercel env add`
 
-**Bisa dicek:** langkah verifikasi di [04-notifications.md](04-notifications.md).
+Satu kejutan: `lib/notifications.ts` mengimpor `"server-only"`, yang **throw** begitu diimpor di luar kondisi `react-server` — termasuk lewat `node --test` biasa. `npm run test:db` karena itu menambahkan `--conditions=react-server` supaya modul itu resolve ke stub kosongnya, bukan melempar error.
 
-## 8 — Dashboard & seed
+**Terverifikasi:** `npm test` — 8 pengujian murni untuk format subjek/isi email dan `isAuthorizedCron` (`test/notifications.test.ts`). `npm run test:db` — `test/integration/notifications.test.ts` membuat baris submission committed (lewat koneksi `pg` mentah, sama seperti `concurrency.test.ts`, karena `runDeadlineCron` membaca lewat PostgREST — koneksi terpisah yang tidak melihat transaksi yang di-rollback), lalu memanggil `runDeadlineCron` dengan `sendEmail` tiruan: pengingat H-3 dan lewat-deadline terkirim ke penerima yang benar, `approved` dan di luar jendela dilewati, stempel mencegah kirim dobel pada `run` kedua.
 
-- [ ] `/` — kartu jumlah per status, daftar mendekati deadline (saat ini masih halaman profil sementara)
-- [ ] `supabase/seed.sql` — 4 user (satu per role), ~10 facility, pengajuan di tiap status
+Resend **masih tertahan** menunggu penerimaan marketplace terms di browser (langkah pemilik akun, bukan sesuatu yang bisa CLI selesaikan):
 
-Database saat ini berisi data hasil verifikasi step 5–6, **bukan** seed resmi:
+```
+https://vercel.com/yayanrws-projects/~/integrations/accept-terms/resend?source=cli
+vercel integration add resend/resend-email --no-claim   # ulangi setelah diterima, lalu vercel env pull
+```
+
+Sampai itu selesai, `RESEND_API_KEY` belum ada di environment dan `sendEmail()` akan gagal saat benar-benar dipanggil — tapi seluruh jalur di atasnya (query, penerima, format, stempel) sudah teruji lewat `send` tiruan.
+
+## 8 — Dashboard & seed ✅
+
+- [x] `/` — kartu jumlah per status (klik untuk filter), daftar "Mendekati deadline" (5 teratas, `status <> 'approved'`, urut deadline)
+- [x] `supabase/seed.sql` — 4 user (`req@`/`rev@`/`app@`/`admin@ff.test`, password `FlowTest!2026`), 9 facility langsung + 1 lewat asset submission yang di-approve, submission di tiap status
+
+Seed sudah dijalankan terhadap project dev, menggantikan data verifikasi step 5–6:
 
 | Isi | Jumlah |
 |---|---|
-| User | 3 — `req@ff.test` (requester), `rev@ff.test` (reviewer), `app@ff.test` (approver), password `FlowTest!2026` |
-| Facility terbit | 1 — `AC-GD1-201-U1` |
-| Submission | 2 — satu `approved` (asset), satu `pending_review` (damage) |
+| User | 4 — satu per role |
+| Facility terbit | 10 |
+| Submission | 5 — 2× `pending_review`, 1× `pending_approval`, 1× `rejected`, 1× `approved` |
 
-Cukup untuk menjalankan aplikasi, belum cukup untuk menguji tampilan berisi banyak baris. Step ini menggantinya dengan seed yang benar.
+Skrip idempoten — aman dijalankan ulang (`node -e "..." "$DBURL"` dengan isi `supabase/seed.sql`, atau `psql "$DBURL" -f supabase/seed.sql`). Dua kejutan yang baru ketahuan saat menulis dan menjalankannya sungguhan lewat login browser, bukan lewat RPC test harness:
+
+- **`session_replication_role = replica`, yang dibutuhkan untuk melewati trigger append-only `submission_actions`, juga membungkam trigger `on delete cascade`.** Baris `profiles` untuk akun lama jadi tidak ikut terhapus, meninggalkan baris yatim dengan email yang sama — kelihatan sebagai profil dobel. Perbaikannya: hapus `public.profiles` secara eksplisit di skrip cleanup, jangan bergantung pada cascade dari `auth.users`.
+- **Insert manual ke `auth.users` belum cukup untuk login sungguhan.** GoTrue butuh baris `auth.identities` (provider `email`) juga, dan kolom `*_token`/`*_change` yang defaultnya `NULL` harus diisi `''` secara eksplisit — kalau tidak, login gagal dengan `500 Database error querying schema`, bukan pesan yang jelas. Test harness (`test/integration/db.ts`) tidak pernah menabrak ini karena dia hanya meng-impersonate lewat `request.jwt.claims`, tidak pernah login sungguhan lewat GoTrue.
+
+**Terverifikasi di browser:** login `req@`/`rev@ff.test` dengan password seed, dashboard menampilkan kartu jumlah dan daftar deadline yang benar untuk kedua role, `/facilities` menampilkan seluruh 10 sarana termasuk yang terbit lewat asset submission yang di-approve, console bersih.
 
 ---
 
@@ -206,9 +225,12 @@ Sisa yang masih manual:
 
 ### Notifikasi
 
-- [ ] Cron dipanggil dua kali → email hanya keluar sekali
-- [ ] Pengajuan `approved` dengan deadline lampau → tidak dapat email
-- [ ] Cron tanpa `CRON_SECRET` → 401
+Ketiganya sudah tercakup otomatis di `test/integration/notifications.test.ts` dan `test/notifications.test.ts` lewat `send` tiruan (lihat step 7) — belum diverifikasi dengan email **sungguhan** karena Resend belum diprovisikan:
+
+- [x] Cron dipanggil dua kali → email hanya keluar sekali *(diverifikasi lewat test, bukan Resend sungguhan)*
+- [x] Pengajuan `approved` dengan deadline lampau → tidak dapat email *(diverifikasi lewat test)*
+- [x] Cron tanpa `CRON_SECRET` → 401 *(diverifikasi lewat test)*
+- [ ] `curl` terhadap cron yang benar-benar mengirim lewat Resend *(menunggu provisioning)*
 
 ---
 
